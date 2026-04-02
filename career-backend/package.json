@@ -1,0 +1,25 @@
+{
+  "name": "career-backend",
+  "version": "1.0.0",
+  "description": "EDUpluse Career Management Backend",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "seed": "node src/seed/seedData.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "mongoose": "^8.18.0",
+    "morgan": "^1.10.1",
+    "puppeteer": "^24.23.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
