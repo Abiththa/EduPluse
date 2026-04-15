@@ -35,6 +35,8 @@ type BackendCv = {
     | {
         _id: string;
         name?: string;
+        slug?: string;
+        key?: string;
       };
   data?: {
     personal?: {
@@ -72,6 +74,15 @@ type BackendCv = {
   };
   status: string;
   updatedAt: string;
+};
+
+type TemplateItem = {
+  _id: string;
+  name?: string;
+  slug?: string;
+  key?: string;
+  title?: string;
+  displayName?: string;
 };
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -368,7 +379,11 @@ function mapBackendCvToFormState(cv: BackendCv): CVState {
   };
 }
 
-function buildCvPayload(cvData: CVState, templateId: string, status: "draft" | "final") {
+function buildCvPayload(
+  cvData: CVState,
+  templateId: string,
+  status: "draft" | "final"
+) {
   return {
     templateId,
     status,
@@ -430,6 +445,37 @@ function buildCvPayload(cvData: CVState, templateId: string, status: "draft" | "
   };
 }
 
+async function resolveTemplateIdByName(template: string): Promise<string> {
+  const res = await apiFetch("/cv/templates");
+  const templates: TemplateItem[] = Array.isArray(res?.data)
+    ? res.data
+    : Array.isArray(res)
+    ? res
+    : [];
+
+  const normalized = template.toLowerCase().trim();
+
+  const matched = templates.find((item) => {
+    const candidates = [
+      item.name,
+      item.slug,
+      item.key,
+      item.title,
+      item.displayName,
+    ]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase().trim());
+
+    return candidates.includes(normalized);
+  });
+
+  if (!matched?._id) {
+    throw new Error(`Template "${template}" not found`);
+  }
+
+  return matched._id;
+}
+
 export default function CreateCVPage() {
   const params = useParams();
   const router = useRouter();
@@ -448,45 +494,52 @@ export default function CreateCVPage() {
   const templateName = formatTemplateName(template);
 
   const [cvData, setCvData] = useState<CVState>(createEmptyCvState());
-  const [resolvedTemplateId, setResolvedTemplateId] = useState(templateIdFromQuery);
+  const [resolvedTemplateId, setResolvedTemplateId] = useState("");
   const [errors, setErrors] = useState<CVErrors>({});
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isSavingComplete, setIsSavingComplete] = useState(false);
-  const [isLoading, setIsLoading] = useState(Boolean(editId));
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const loadExistingCv = async () => {
-      if (!editId) {
-        setResolvedTemplateId(templateIdFromQuery);
-        setIsLoading(false);
-        return;
-      }
-
+    const loadData = async () => {
       try {
         setIsLoading(true);
-        const res = await apiFetch(`/cv/${editId}`);
-        const cv = res.data as BackendCv;
 
-        setCvData(mapBackendCvToFormState(cv));
+        if (editId) {
+          const res = await apiFetch(`/cv/${editId}`);
+          const cv = res.data as BackendCv;
 
-        if (typeof cv.templateId === "object" && cv.templateId?._id) {
-          setResolvedTemplateId(cv.templateId._id);
-        } else if (typeof cv.templateId === "string") {
-          setResolvedTemplateId(cv.templateId);
+          setCvData(mapBackendCvToFormState(cv));
+
+          if (typeof cv.templateId === "object" && cv.templateId?._id) {
+            setResolvedTemplateId(cv.templateId._id);
+          } else if (typeof cv.templateId === "string" && cv.templateId) {
+            setResolvedTemplateId(cv.templateId);
+          } else if (templateIdFromQuery) {
+            setResolvedTemplateId(templateIdFromQuery);
+          } else {
+            const foundTemplateId = await resolveTemplateIdByName(template);
+            setResolvedTemplateId(foundTemplateId);
+          }
         } else {
-          setResolvedTemplateId(templateIdFromQuery);
+          if (templateIdFromQuery) {
+            setResolvedTemplateId(templateIdFromQuery);
+          } else {
+            const foundTemplateId = await resolveTemplateIdByName(template);
+            setResolvedTemplateId(foundTemplateId);
+          }
         }
       } catch (error) {
-        console.error("Failed to load CV for editing:", error);
-        alert(error instanceof Error ? error.message : "Failed to load CV");
-        router.push("/student/cv-builder");
+        console.error("Failed to load create/edit CV page:", error);
+        alert(error instanceof Error ? error.message : "Failed to load CV page");
+        router.push("/student/cv-builder/templates");
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadExistingCv();
-  }, [editId, templateIdFromQuery, router]);
+    loadData();
+  }, [editId, templateIdFromQuery, template, router]);
 
   const saveDraft = async () => {
     const validationErrors = validateDraft(cvData);
@@ -505,17 +558,10 @@ export default function CreateCVPage() {
     try {
       setIsSavingDraft(true);
 
-      if (editId) {
-        await apiFetch(`/cv/${editId}`, {
-          method: "PUT",
-          body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "draft")),
-        });
-      } else {
-        await apiFetch("/cv", {
-          method: "POST",
-          body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "draft")),
-        });
-      }
+      await apiFetch(editId ? `/cv/${editId}` : "/cv", {
+        method: editId ? "PUT" : "POST",
+        body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "draft")),
+      });
 
       alert(editId ? "Draft updated successfully" : "Draft saved successfully");
       router.push("/student/cv-builder");
@@ -544,17 +590,10 @@ export default function CreateCVPage() {
     try {
       setIsSavingComplete(true);
 
-      if (editId) {
-        await apiFetch(`/cv/${editId}`, {
-          method: "PUT",
-          body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "final")),
-        });
-      } else {
-        await apiFetch("/cv", {
-          method: "POST",
-          body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "final")),
-        });
-      }
+      await apiFetch(editId ? `/cv/${editId}` : "/cv", {
+        method: editId ? "PUT" : "POST",
+        body: JSON.stringify(buildCvPayload(cvData, resolvedTemplateId, "final")),
+      });
 
       alert(editId ? "CV updated successfully" : "CV saved successfully");
       router.push("/student/cv-builder");
